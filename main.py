@@ -87,28 +87,24 @@ class BankingBot(commands.Bot):
 
 bot = BankingBot()
 
-@bot.tree.command(name="embed-stipendi", description="Mostra la tabella degli stipendi")
-async def embed_stipendi(interaction: Interaction):
-    embed = discord.Embed(title="💼 Tabella Stipendi Statali", color=discord.Color.green())
-    
-    # Mappatura emoji per ciascun lavoro
-    emoji_lavori = {
-        "FDO": "👮‍♂️",
-        "Vigile Del Fuoco": "👩‍🚒",
-        "SUEM": "🚑",
-        "ACI": "🛠️",
-        "Tassista": "🚖",
-        "Camionista": "🚛",
-        "Autista BUS": "🚌"
-    }
+STIPENDI = {
+    "FDO": 3200,
+    "Vigile Del Fuoco": 3500,
+    "SUEM": 3800,
+    "ACI": 2200,
+    "Tassista": 2000,
+    "Camionista": 3000,
+    "Autista BUS": 2300
+}
 
-    descrizione = ""
-    for idx, (job, paga) in enumerate(STIPENDI.items(), 1):
-        emoji = emoji_lavori.get(job, "💼")
-        descrizione += f"**{idx}.** {emoji} {job} ➔ **€ {paga:,}**\n"
-    
-    embed.description = descrizione
-    await interaction.response.send_message(embed=embed)
+EMOJI_LAVORI = {
+    "FDO": "👮‍♂️",
+    "Vigile Del Fuoco": "👩‍🚒",
+    "SUEM": "🚑",
+    "ACI": "🛠️",
+    "Tassista": "🚖",
+    "Camionista": "🚛",
+    "Autista BUS": "🚌"
 }
 
 # --- FUNZIONI UTILITÀ ---
@@ -134,6 +130,13 @@ def check_conto_attivo(user_id):
     if res[0] == 1:
         return False, "🔒 Il tuo conto bancario è attualmente bloccato dallo staff."
     return True, ""
+
+async def invia_dm_embed(interaction: Interaction, embed: discord.Embed, msg_successo: str):
+    try:
+        await interaction.user.send(embed=embed)
+        await interaction.response.send_message(msg_successo, ephemeral=True)
+    except discord.Forbidden:
+        await interaction.response.send_message("❌ Impossibile inviarti un DM. Verificare di aver abilitato i messaggi privati nelle impostazioni del server.", ephemeral=True)
 
 # --- AUTOMAZIONE SETTIMANALE ---
 @tasks.loop(hours=168)
@@ -325,8 +328,11 @@ async def conto_embed(interaction: Interaction):
 @bot.tree.command(name="embed-stipendi", description="Mostra la tabella degli stipendi")
 async def embed_stipendi(interaction: Interaction):
     embed = discord.Embed(title="💼 Tabella Stipendi Statali", color=discord.Color.green())
-    for job, paga in STIPENDI.items():
-        embed.add_field(name=job, value=f"€ {paga:,}", inline=True)
+    descrizione = ""
+    for idx, (job, paga) in enumerate(STIPENDI.items(), 1):
+        emoji = EMOJI_LAVORI.get(job, "💼")
+        descrizione += f"**{idx}.** {emoji} {job} ➔ **€ {paga:,}**\n"
+    embed.description = descrizione
     await interaction.response.send_message(embed=embed)
 
 @bot.tree.command(name="aggiungi-membro-stipendio", description="Registra un utente agli stipendi (Solo Staff)")
@@ -370,7 +376,7 @@ async def paga_tasse(interaction: Interaction):
     log_transazione(interaction.user.id, "Pagamento Tasse", -debito)
     await interaction.response.send_message(f"✅ Hai pagato **€ {debito:,}** di tasse.")
 
-# --- 4️⃣ COMANDI PERSONALI ---
+# --- 4️⃣ COMANDI PERSONALI (INVIATI IN DM) ---
 @bot.tree.command(name="saldo", description="Visualizza il saldo del tuo conto")
 async def saldo(interaction: Interaction):
     ok, err = check_conto_attivo(interaction.user.id)
@@ -391,7 +397,49 @@ async def saldo(interaction: Interaction):
     embed.add_field(name="Debito Tasse", value=f"€ {deb:,}", inline=False)
     embed.add_field(name="Stato", value="🔴 Bloccato" if bloc else "🟢 Attivo", inline=False)
 
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    await invia_dm_embed(interaction, embed, "📩 Ti ho inviato le informazioni sul saldo nei messaggi privati!")
+
+@bot.tree.command(name="stato", description="Mostra le informazioni generali del conto")
+async def stato(interaction: Interaction):
+    ok, err = check_conto_attivo(interaction.user.id)
+    if not ok: return await interaction.response.send_message(err, ephemeral=True)
+
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("SELECT nome_rp, data_nascita, saldo, lavoro, bloccato, debito_tasse FROM conti WHERE user_id = ?", (interaction.user.id,))
+    r = c.fetchone()
+    conn.close()
+
+    embed = discord.Embed(title="👤 Stato Conto RP", color=discord.Color.blue())
+    embed.add_field(name="Titolare RP", value=r[0], inline=True)
+    embed.add_field(name="Data di Nascita", value=r[1], inline=True)
+    embed.add_field(name="Saldo", value=f"€ {r[2]:,}", inline=False)
+    embed.add_field(name="Occupazione", value=r[3] or "Disoccupato", inline=True)
+    embed.add_field(name="Stato Operativo", value="🔴 Bloccato" if r[4] else "🟢 Attivo", inline=True)
+    embed.add_field(name="Debito Tasse", value=f"€ {r[5]:,}", inline=False)
+
+    await invia_dm_embed(interaction, embed, "📩 Ti ho inviato lo stato del tuo conto nei messaggi privati!")
+
+@bot.tree.command(name="transazioni", description="Mostra la cronologia del tuo conto")
+async def transazioni(interaction: Interaction):
+    ok, err = check_conto_attivo(interaction.user.id)
+    if not ok: return await interaction.response.send_message(err, ephemeral=True)
+
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("SELECT tipo, importo, data FROM transazioni WHERE user_id = ? ORDER BY id DESC LIMIT 10", (interaction.user.id,))
+    rows = c.fetchall()
+    conn.close()
+
+    embed = discord.Embed(title="📜 Ultime 10 Transazioni", color=discord.Color.blue())
+    if rows:
+        for tipo, imp, dt in rows:
+            segno = "+" if imp > 0 else ""
+            embed.add_field(name=f"{dt} - {tipo}", value=f"**{segno}€ {imp:,}**", inline=False)
+    else:
+        embed.description = "Nessuna transazione registrata."
+
+    await invia_dm_embed(interaction, embed, "📩 Ti ho inviato la cronologia delle transazioni nei messaggi privati!")
 
 @bot.tree.command(name="bonifico", description="Invia un bonifico a un altro conto RP")
 async def bonifico(interaction: Interaction, importo: float, mittente: str, destinatario: str, nota: str = "Nessuna"):
@@ -434,45 +482,6 @@ async def bonifico(interaction: Interaction, importo: float, mittente: str, dest
         except: pass
 
     await interaction.response.send_message(f"✅ Bonifico di **€ {importo:,}** inviato a **{destinatario}**.")
-
-@bot.tree.command(name="transazioni", description="Mostra la cronologia del tuo conto")
-async def transazioni(interaction: Interaction):
-    ok, err = check_conto_attivo(interaction.user.id)
-    if not ok: return await interaction.response.send_message(err, ephemeral=True)
-
-    conn = get_db()
-    c = conn.cursor()
-    c.execute("SELECT tipo, importo, data FROM transazioni WHERE user_id = ? ORDER BY id DESC LIMIT 10", (interaction.user.id,))
-    rows = c.fetchall()
-    conn.close()
-
-    embed = discord.Embed(title="📜 Ultime 10 Transazioni", color=discord.Color.blue())
-    for tipo, imp, dt in rows:
-        segno = "+" if imp > 0 else ""
-        embed.add_field(name=f"{dt} - {tipo}", value=f"**{segno}€ {imp:,}**", inline=False)
-
-    await interaction.response.send_message(embed=embed, ephemeral=True)
-
-@bot.tree.command(name="stato", description="Mostra le informazioni generali del conto")
-async def stato(interaction: Interaction):
-    ok, err = check_conto_attivo(interaction.user.id)
-    if not ok: return await interaction.response.send_message(err, ephemeral=True)
-
-    conn = get_db()
-    c = conn.cursor()
-    c.execute("SELECT nome_rp, data_nascita, saldo, lavoro, bloccato, debito_tasse FROM conti WHERE user_id = ?", (interaction.user.id,))
-    r = c.fetchone()
-    conn.close()
-
-    embed = discord.Embed(title="👤 Stato Conto", color=discord.Color.blue())
-    embed.add_field(name="Titolare RP", value=r[0])
-    embed.add_field(name="Data di Nascita", value=r[1])
-    embed.add_field(name="Saldo", value=f"€ {r[2]:,}")
-    embed.add_field(name="Occupazione", value=r[3] or "Disoccupato")
-    embed.add_field(name="Stato Operativo", value="🔴 Bloccato" if r[4] else "🟢 Attivo")
-    embed.add_field(name="Debito Tasse", value=f"€ {r[5]:,}")
-
-    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 @bot.tree.command(name="multa", description="Emette una sanzione verso un utente")
 async def multa(interaction: Interaction, utente: discord.User, importo: float, motivo: str):
@@ -564,10 +573,11 @@ async def miei_conti_condivisi(interaction: Interaction):
         ruolo = "👑 Proprietario" if prop_id == interaction.user.id else "👤 Membro"
         embed.add_field(name=f"Conto: {nome}", value=f"Saldo: € {saldo:,}\nRuolo: {ruolo}", inline=False)
 
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    await invia_dm_embed(interaction, embed, "📩 Ti ho inviato l'elenco dei conti condivisi nei messaggi privati!")
 
 # --- ESECUZIONE BOT ---
 if __name__ == "__main__":
     if not TOKEN:
         raise ValueError("❌ Token non trovato! Assicurati che il file .env contenga la voce DISCORD_TOKEN.")
     bot.run(TOKEN)
+    

@@ -1,6 +1,8 @@
 import os
 import sqlite3
 import datetime
+from threading import Thread
+from flask import Flask
 import discord
 from discord.ext import commands, tasks
 from discord import app_commands, Interaction
@@ -10,12 +12,26 @@ from dotenv import load_dotenv
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
 
+# --- MINI SERVER WEB PER ANTI-SLEEP ---
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "Bot Online!"
+
+def run_http():
+    app.run(host='0.0.0.0', port=8080)
+
+def keep_alive():
+    t = Thread(target=run_http)
+    t.daemon = True
+    t.start()
+
 # --- DATABASE SETUP ---
 def init_db():
     conn = sqlite3.connect('database.db')
     c = conn.cursor()
     
-    # Configurazione del server
     c.execute('''CREATE TABLE IF NOT EXISTS config (
                     guild_id INTEGER PRIMARY KEY,
                     chan_auth INTEGER,
@@ -25,7 +41,6 @@ def init_db():
                     role_staff INTEGER
                 )''')
 
-    # Conti personali
     c.execute('''CREATE TABLE IF NOT EXISTS conti (
                     user_id INTEGER PRIMARY KEY,
                     nome_rp TEXT,
@@ -36,7 +51,6 @@ def init_db():
                     lavoro TEXT DEFAULT NULL
                 )''')
 
-    # Fondi di risparmio
     c.execute('''CREATE TABLE IF NOT EXISTS fondi (
                     user_id INTEGER,
                     nome_fondo TEXT,
@@ -44,7 +58,6 @@ def init_db():
                     PRIMARY KEY (user_id, nome_fondo)
                 )''')
 
-    # Conti condivisi
     c.execute('''CREATE TABLE IF NOT EXISTS conti_condivisi (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     nome TEXT UNIQUE,
@@ -58,7 +71,6 @@ def init_db():
                     PRIMARY KEY (conto_id, user_id)
                 )''')
 
-    # Registro transazioni
     c.execute('''CREATE TABLE IF NOT EXISTS transazioni (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     user_id INTEGER,
@@ -144,7 +156,6 @@ async def stipendi_e_tasse_loop():
     conn = get_db()
     c = conn.cursor()
     
-    # Accredito Stipendi
     c.execute("SELECT user_id, lavoro FROM conti WHERE lavoro IS NOT NULL AND bloccato = 0")
     lavoratori = c.fetchall()
     for uid, lavoro in lavoratori:
@@ -159,7 +170,6 @@ async def stipendi_e_tasse_loop():
                     await user.send(embed=embed)
                 except: pass
 
-    # Emissione Tassa Settimanale (€400)
     c.execute("UPDATE conti SET debito_tasse = debito_tasse + 400 WHERE bloccato = 0")
     c.execute("SELECT user_id FROM conti WHERE bloccato = 0")
     tassati = c.fetchall()
@@ -174,7 +184,7 @@ async def stipendi_e_tasse_loop():
     conn.commit()
     conn.close()
 
-# --- 1️⃣ SETUP E CONFIGURAZIONE ---
+# --- SETUP E CONFIGURAZIONE ---
 setup_group = app_commands.Group(name="setup", description="Configura il sistema del Bot Bancario")
 
 @setup_group.command(name="canale", description="Imposta il canale autorizzazioni")
@@ -247,7 +257,7 @@ async def setup_mostra(interaction: Interaction):
 
 bot.tree.add_command(setup_group)
 
-# --- 2️⃣ APERTURA CONTO ---
+# --- APERTURA CONTO ---
 class ModalAperturaConto(discord.ui.Modal, title="Richiesta Apertura Conto"):
     nome_rp = discord.ui.TextInput(label="Nome e Cognome RP", placeholder="Es. Mario Rossi")
     data_nascita = discord.ui.TextInput(label="Data di Nascita", placeholder="GG/MM/AAAA")
@@ -324,7 +334,7 @@ async def conto_embed(interaction: Interaction):
     await interaction.channel.send(embed=embed, view=ViewBottoneConto())
     await interaction.response.send_message("Pannello inviato con successo!", ephemeral=True)
 
-# --- 3️⃣ STIPENDI E TASSE ---
+# --- STIPENDI E TASSE ---
 @bot.tree.command(name="embed-stipendi", description="Mostra la tabella degli stipendi")
 async def embed_stipendi(interaction: Interaction):
     embed = discord.Embed(title="💼 Tabella Stipendi Statali", color=discord.Color.green())
@@ -376,7 +386,7 @@ async def paga_tasse(interaction: Interaction):
     log_transazione(interaction.user.id, "Pagamento Tasse", -debito)
     await interaction.response.send_message(f"✅ Hai pagato **€ {debito:,}** di tasse.")
 
-# --- 4️⃣ COMANDI PERSONALI (INVIATI IN DM) ---
+# --- COMANDI PERSONALI (INVIATI IN DM) ---
 @bot.tree.command(name="saldo", description="Visualizza il saldo del tuo conto")
 async def saldo(interaction: Interaction):
     ok, err = check_conto_attivo(interaction.user.id)
@@ -553,7 +563,7 @@ async def preleva_fondo(interaction: Interaction, fondo: str, importo: float):
     log_transazione(interaction.user.id, f"Prelievo fondo: {fondo}", importo)
     await interaction.response.send_message(f"✅ Prelevati **€ {importo:,}** dal fondo **{fondo}**.")
 
-# --- 5️⃣ CONTI CONDIVISI ---
+# --- CONTI CONDIVISI ---
 @bot.tree.command(name="miei-conti-condivisi", description="Elenca i tuoi conti condivisi")
 async def miei_conti_condivisi(interaction: Interaction):
     conn = get_db()
@@ -579,5 +589,5 @@ async def miei_conti_condivisi(interaction: Interaction):
 if __name__ == "__main__":
     if not TOKEN:
         raise ValueError("❌ Token non trovato! Assicurati che il file .env contenga la voce DISCORD_TOKEN.")
+    keep_alive()  # Mantiene il server web di supporto attivo
     bot.run(TOKEN)
-    

@@ -87,14 +87,28 @@ class BankingBot(commands.Bot):
 
 bot = BankingBot()
 
-STIPENDI = {
-    "FDO": 3200,
-    "Vigile Del Fuoco": 3500,
-    "SUEM": 3800,
-    "ACI": 2200,
-    "Tassista": 2000,
-    "Camionista": 3000,
-    "Autista BUS": 2300
+@bot.tree.command(name="embed-stipendi", description="Mostra la tabella degli stipendi")
+async def embed_stipendi(interaction: Interaction):
+    embed = discord.Embed(title="💼 Tabella Stipendi Statali", color=discord.Color.green())
+    
+    # Mappatura emoji per ciascun lavoro
+    emoji_lavori = {
+        "FDO": "👮‍♂️",
+        "Vigile Del Fuoco": "👩‍🚒",
+        "SUEM": "🚑",
+        "ACI": "🛠️",
+        "Tassista": "🚖",
+        "Camionista": "🚛",
+        "Autista BUS": "🚌"
+    }
+
+    descrizione = ""
+    for idx, (job, paga) in enumerate(STIPENDI.items(), 1):
+        emoji = emoji_lavori.get(job, "💼")
+        descrizione += f"**{idx}.** {emoji} {job} ➔ **€ {paga:,}**\n"
+    
+    embed.description = descrizione
+    await interaction.response.send_message(embed=embed)
 }
 
 # --- FUNZIONI UTILITÀ ---

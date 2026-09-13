@@ -1,15 +1,21 @@
+import os
+import sqlite3
+import datetime
 import discord
 from discord.ext import commands, tasks
 from discord import app_commands, Interaction
-import sqlite3
-import datetime
+from dotenv import load_dotenv
+
+# --- CARICAMENTO CONFIGURAZIONE ---
+load_dotenv()
+TOKEN = os.getenv("DISCORD_TOKEN")
 
 # --- DATABASE SETUP ---
 def init_db():
     conn = sqlite3.connect('database.db')
     c = conn.cursor()
     
-    # Configurazione server
+    # Configurazione del server
     c.execute('''CREATE TABLE IF NOT EXISTS config (
                     guild_id INTEGER PRIMARY KEY,
                     chan_auth INTEGER,
@@ -52,7 +58,7 @@ def init_db():
                     PRIMARY KEY (conto_id, user_id)
                 )''')
 
-    # Transazioni
+    # Registro transazioni
     c.execute('''CREATE TABLE IF NOT EXISTS transazioni (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     user_id INTEGER,
@@ -66,7 +72,7 @@ def init_db():
 
 init_db()
 
-# --- BOT BOT CONSTANTS AND INIT ---
+# --- INIZIALIZZAZIONE BOT ---
 intents = discord.Intents.default()
 intents.members = True
 intents.message_content = True
@@ -91,7 +97,7 @@ STIPENDI = {
     "Autista BUS": 2300
 }
 
-# --- HELPERS ---
+# --- FUNZIONI UTILITÀ ---
 def get_db():
     return sqlite3.connect('database.db')
 
@@ -116,12 +122,12 @@ def check_conto_attivo(user_id):
     return True, ""
 
 # --- AUTOMAZIONE SETTIMANALE ---
-@tasks.loop(hours=168) # 1 settimana
+@tasks.loop(hours=168)
 async def stipendi_e_tasse_loop():
     conn = get_db()
     c = conn.cursor()
     
-    # Processa stipendi
+    # Accredito Stipendi
     c.execute("SELECT user_id, lavoro FROM conti WHERE lavoro IS NOT NULL AND bloccato = 0")
     lavoratori = c.fetchall()
     for uid, lavoro in lavoratori:
@@ -136,7 +142,7 @@ async def stipendi_e_tasse_loop():
                     await user.send(embed=embed)
                 except: pass
 
-    # Processa Tassa Settimanale (€400)
+    # Emissione Tassa Settimanale (€400)
     c.execute("UPDATE conti SET debito_tasse = debito_tasse + 400 WHERE bloccato = 0")
     c.execute("SELECT user_id FROM conti WHERE bloccato = 0")
     tassati = c.fetchall()
@@ -154,7 +160,7 @@ async def stipendi_e_tasse_loop():
 # --- 1️⃣ SETUP E CONFIGURAZIONE ---
 setup_group = app_commands.Group(name="setup", description="Configura il sistema del Bot Bancario")
 
-@setup_group.command(name="canale", description="Imposta il canale delle autorizzazioni")
+@setup_group.command(name="canale", description="Imposta il canale autorizzazioni")
 @app_commands.checks.has_permissions(manage_guild=True)
 async def setup_canale(interaction: Interaction, canale: discord.TextChannel):
     conn = get_db()
@@ -184,7 +190,7 @@ async def setup_milionario(interaction: Interaction, ruolo: discord.Role):
     conn.close()
     await interaction.response.send_message(f"✅ Ruolo Milionario impostato su {ruolo.mention}", ephemeral=True)
 
-@setup_group.command(name="multa", description="Imposta il ruolo per le multe")
+@setup_group.command(name="multa", description="Imposta il ruolo abilitato al comando multa")
 @app_commands.checks.has_permissions(manage_guild=True)
 async def setup_multa(interaction: Interaction, ruolo: discord.Role):
     conn = get_db()
@@ -224,7 +230,7 @@ async def setup_mostra(interaction: Interaction):
 
 bot.tree.add_command(setup_group)
 
-# --- 2️⃣ FLUSSO APERTURA CONTO ---
+# --- 2️⃣ APERTURA CONTO ---
 class ModalAperturaConto(discord.ui.Modal, title="Richiesta Apertura Conto"):
     nome_rp = discord.ui.TextInput(label="Nome e Cognome RP", placeholder="Es. Mario Rossi")
     data_nascita = discord.ui.TextInput(label="Data di Nascita", placeholder="GG/MM/AAAA")
@@ -238,7 +244,7 @@ class ModalAperturaConto(discord.ui.Modal, title="Richiesta Apertura Conto"):
         conn.close()
 
         if not res or not res[0]:
-            return await interaction.response.send_message("❌ Il canale autorizzazioni non è configurato nello /setup.", ephemeral=True)
+            return await interaction.response.send_message("❌ Il canale autorizzazioni non è configurato.", ephemeral=True)
 
         chan = interaction.guild.get_channel(res[0])
         embed = discord.Embed(title="💳 Richiesta Apertura Conto", color=discord.Color.gold())
@@ -249,7 +255,7 @@ class ModalAperturaConto(discord.ui.Modal, title="Richiesta Apertura Conto"):
         
         view = ViewApprovazione(interaction.user.id, self.nome_rp.value, self.data_nascita.value)
         await chan.send(embed=embed, view=view)
-        await interaction.response.send_message("✅ Richiesta inviata allo staff!", ephemeral=True)
+        await interaction.response.send_message("✅ Richiesta inviata con successo allo staff!", ephemeral=True)
 
 class ViewApprovazione(discord.ui.View):
     def __init__(self, target_id, nome_rp, data_nascita):
@@ -284,7 +290,7 @@ class ViewApprovazione(discord.ui.View):
     async def rifiuta(self, interaction: Interaction, button: discord.ui.Button):
         member = interaction.guild.get_member(self.target_id)
         if member:
-            try: await member.send("❌ La tua richiesta di apertura conto è stata **RIFIUTATA** dallo Staff.")
+            try: await member.send("❌ La tua richiesta di apertura conto è stata **RIFIUTATA**.")
             except: pass
         await interaction.response.send_message(f"❌ Conto di <@{self.target_id}> rifiutato.", ephemeral=True)
         self.stop()
@@ -295,24 +301,24 @@ class ViewBottoneConto(discord.ui.View):
     async def crea(self, interaction: Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(ModalAperturaConto())
 
-@bot.tree.command(name="conto-embed", description="Invia l'embed per la creazione del conto (Solo Staff)")
+@bot.tree.command(name="conto-embed", description="Invia il pannello per la creazione conto (Solo Staff)")
 async def conto_embed(interaction: Interaction):
-    embed = discord.Embed(title="🏦 Banca Stato", description="Clicca sul pulsante sottostante per inviare la richiesta di apertura conto.", color=discord.Color.blue())
+    embed = discord.Embed(title="🏦 Banca Stato", description="Clicca sul pulsante per richiedere l'apertura del conto.", color=discord.Color.blue())
     await interaction.channel.send(embed=embed, view=ViewBottoneConto())
-    await interaction.response.send_message("Pannello inviato!", ephemeral=True)
+    await interaction.response.send_message("Pannello inviato con successo!", ephemeral=True)
 
-# --- 3️⃣ SISTEMA STIPENDI E TASSE ---
-@bot.tree.command(name="embed-stipendi", description="Mostra la tabella degli stipendi pubblicamente")
+# --- 3️⃣ STIPENDI E TASSE ---
+@bot.tree.command(name="embed-stipendi", description="Mostra la tabella degli stipendi")
 async def embed_stipendi(interaction: Interaction):
     embed = discord.Embed(title="💼 Tabella Stipendi Statali", color=discord.Color.green())
     for job, paga in STIPENDI.items():
         embed.add_field(name=job, value=f"€ {paga:,}", inline=True)
     await interaction.response.send_message(embed=embed)
 
-@bot.tree.command(name="aggiungi-membro-stipendio", description="Registra un utente agli stipendi automatici (Solo Staff)")
+@bot.tree.command(name="aggiungi-membro-stipendio", description="Registra un utente agli stipendi (Solo Staff)")
 async def aggiungi_membro_stipendio(interaction: Interaction, utente: discord.User, lavoro: str):
     if lavoro not in STIPENDI:
-        return await interaction.response.send_message(f"❌ Lavoro non valido. Scegli tra: {', '.join(STIPENDI.keys())}", ephemeral=True)
+        return await interaction.response.send_message(f"❌ Lavoro non valido. Opzioni: {', '.join(STIPENDI.keys())}", ephemeral=True)
     
     ok, err = check_conto_attivo(utente.id)
     if not ok: return await interaction.response.send_message(err, ephemeral=True)
@@ -323,7 +329,7 @@ async def aggiungi_membro_stipendio(interaction: Interaction, utente: discord.Us
     conn.commit()
     conn.close()
 
-    await interaction.response.send_message(f"✅ Utente {utente.mention} registrato con successo come **{lavoro}**.")
+    await interaction.response.send_message(f"✅ Utente {utente.mention} registrato come **{lavoro}**.")
 
 @bot.tree.command(name="paga-tasse", description="Paga le tasse accumulate sul tuo conto")
 async def paga_tasse(interaction: Interaction):
@@ -341,17 +347,17 @@ async def paga_tasse(interaction: Interaction):
 
     if saldo < debito:
         conn.close()
-        return await interaction.response.send_message(f"❌ Saldo insufficiente. Hai bisogno di € {debito:,} ma possiedi € {saldo:,}.", ephemeral=True)
+        return await interaction.response.send_message(f"❌ Saldo insufficiente (€ {saldo:,} / € {debito:,}).", ephemeral=True)
 
     c.execute("UPDATE conti SET saldo = saldo - ?, debito_tasse = 0 WHERE user_id = ?", (debito, interaction.user.id))
     conn.commit()
     conn.close()
 
     log_transazione(interaction.user.id, "Pagamento Tasse", -debito)
-    await interaction.response.send_message(f"✅ Tasse pagate con successo per un importo pari a **€ {debito:,}**.")
+    await interaction.response.send_message(f"✅ Hai pagato **€ {debito:,}** di tasse.")
 
-# --- 4️⃣ COMANDI OPERATIVI (CONTO PERSONALE) ---
-@bot.tree.command(name="saldo", description="Visualizza il tuo saldo e dettagli")
+# --- 4️⃣ COMANDI PERSONALI ---
+@bot.tree.command(name="saldo", description="Visualizza il saldo del tuo conto")
 async def saldo(interaction: Interaction):
     ok, err = check_conto_attivo(interaction.user.id)
     if not ok: return await interaction.response.send_message(err, ephemeral=True)
@@ -367,13 +373,13 @@ async def saldo(interaction: Interaction):
 
     embed = discord.Embed(title="💳 Dettaglio Saldo", color=discord.Color.blue())
     embed.add_field(name="Saldo Disponibile", value=f"€ {sal:,}", inline=False)
-    embed.add_field(name="Totale Fondi", value=f"€ {fondi:,}", inline=False)
+    embed.add_field(name="Fondi Risparmio", value=f"€ {fondi:,}", inline=False)
     embed.add_field(name="Debito Tasse", value=f"€ {deb:,}", inline=False)
-    embed.add_field(name="Stato Conto", value="🔴 Bloccato" if bloc else "🟢 Attivo", inline=False)
+    embed.add_field(name="Stato", value="🔴 Bloccato" if bloc else "🟢 Attivo", inline=False)
 
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
-@bot.tree.command(name="bonifico", description="Esegui un bonifico verso un altro conto RP")
+@bot.tree.command(name="bonifico", description="Invia un bonifico a un altro conto RP")
 async def bonifico(interaction: Interaction, importo: float, mittente: str, destinatario: str, nota: str = "Nessuna"):
     ok, err = check_conto_attivo(interaction.user.id)
     if not ok: return await interaction.response.send_message(err, ephemeral=True)
@@ -387,7 +393,7 @@ async def bonifico(interaction: Interaction, importo: float, mittente: str, dest
 
     if mittente.lower() != nome_rp.lower():
         conn.close()
-        return await interaction.response.send_message("❌ Il nome mittente inserito non corrisponde al tuo Nome RP registrato.", ephemeral=True)
+        return await interaction.response.send_message("❌ Il nome mittente non corrisponde al tuo Nome RP.", ephemeral=True)
 
     if saldo < importo:
         conn.close()
@@ -397,7 +403,7 @@ async def bonifico(interaction: Interaction, importo: float, mittente: str, dest
     dest = c.fetchone()
     if not dest:
         conn.close()
-        return await interaction.response.send_message("❌ Destinatario non trovato nel database.", ephemeral=True)
+        return await interaction.response.send_message("❌ Destinatario non trovato.", ephemeral=True)
 
     dest_id = dest[0]
     c.execute("UPDATE conti SET saldo = saldo - ? WHERE user_id = ?", (importo, interaction.user.id))
@@ -410,12 +416,12 @@ async def bonifico(interaction: Interaction, importo: float, mittente: str, dest
 
     dest_user = bot.get_user(dest_id)
     if dest_user:
-        try: await dest_user.send(f"📩 Hai ricevuto un bonifico di **€ {importo:,}** da **{mittente}**. Nota: {nota}")
+        try: await dest_user.send(f"📩 Bonifico ricevuto: **€ {importo:,}** da **{mittente}**. Nota: {nota}")
         except: pass
 
     await interaction.response.send_message(f"✅ Bonifico di **€ {importo:,}** inviato a **{destinatario}**.")
 
-@bot.tree.command(name="transazioni", description="Mostra la cronologia transazioni")
+@bot.tree.command(name="transazioni", description="Mostra la cronologia del tuo conto")
 async def transazioni(interaction: Interaction):
     ok, err = check_conto_attivo(interaction.user.id)
     if not ok: return await interaction.response.send_message(err, ephemeral=True)
@@ -433,7 +439,7 @@ async def transazioni(interaction: Interaction):
 
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
-@bot.tree.command(name="stato", description="Verifica lo stato generale del tuo conto")
+@bot.tree.command(name="stato", description="Mostra le informazioni generali del conto")
 async def stato(interaction: Interaction):
     ok, err = check_conto_attivo(interaction.user.id)
     if not ok: return await interaction.response.send_message(err, ephemeral=True)
@@ -454,7 +460,7 @@ async def stato(interaction: Interaction):
 
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
-@bot.tree.command(name="multa", description="Emette una sanzione verso un conto")
+@bot.tree.command(name="multa", description="Emette una sanzione verso un utente")
 async def multa(interaction: Interaction, utente: discord.User, importo: float, motivo: str):
     if importo <= 0: return await interaction.response.send_message("❌ Importo non valido.", ephemeral=True)
 
@@ -473,12 +479,12 @@ async def multa(interaction: Interaction, utente: discord.User, importo: float, 
 
     log_transazione(utente.id, f"Multa ({motivo})", -prelievo)
 
-    try: await utente.send(f"⚠️ Hai ricevuto una multa di **€ {importo:,}** per la seguente motivazione: **{motivo}**.")
+    try: await utente.send(f"⚠️ Hai ricevuto una multa di **€ {importo:,}** per: **{motivo}**.")
     except: pass
 
-    await interaction.response.send_message(f"✅ Multa di € {importo:,} applicata all'utente {utente.mention} (Addebitati € {prelievo:,}).")
+    await interaction.response.send_message(f"✅ Multa applicata a {utente.mention}. Addebitati: € {prelievo:,}.")
 
-@bot.tree.command(name="aggiungi-fondo", description="Versa denaro in un fondo di risparmio")
+@bot.tree.command(name="aggiungi-fondo", description="Versa fondi in un risparmio nominato")
 async def aggiungi_fondo(interaction: Interaction, fondo: str, importo: float):
     ok, err = check_conto_attivo(interaction.user.id)
     if not ok: return await interaction.response.send_message(err, ephemeral=True)
@@ -501,7 +507,7 @@ async def aggiungi_fondo(interaction: Interaction, fondo: str, importo: float):
     log_transazione(interaction.user.id, f"Versamento fondo: {fondo}", -importo)
     await interaction.response.send_message(f"✅ Versati **€ {importo:,}** nel fondo **{fondo}**.")
 
-@bot.tree.command(name="preleva-fondo", description="Preleva denaro da un fondo di risparmio")
+@bot.tree.command(name="preleva-fondo", description="Preleva fondi da un risparmio nominato")
 async def preleva_fondo(interaction: Interaction, fondo: str, importo: float):
     ok, err = check_conto_attivo(interaction.user.id)
     if not ok: return await interaction.response.send_message(err, ephemeral=True)
@@ -514,7 +520,7 @@ async def preleva_fondo(interaction: Interaction, fondo: str, importo: float):
 
     if not res or res[0] < importo:
         conn.close()
-        return await interaction.response.send_message("❌ Fondi non sufficienti nel fondo specificato.", ephemeral=True)
+        return await interaction.response.send_message("❌ Fondi insufficienti nel fondo selezionato.", ephemeral=True)
 
     c.execute("UPDATE fondi SET importo = importo - ? WHERE user_id = ? AND nome_fondo = ?", (importo, interaction.user.id, fondo))
     c.execute("UPDATE conti SET saldo = saldo + ? WHERE user_id = ?", (importo, interaction.user.id))
@@ -524,8 +530,8 @@ async def preleva_fondo(interaction: Interaction, fondo: str, importo: float):
     log_transazione(interaction.user.id, f"Prelievo fondo: {fondo}", importo)
     await interaction.response.send_message(f"✅ Prelevati **€ {importo:,}** dal fondo **{fondo}**.")
 
-# --- 5️⃣ GESTIONE CONTI CONDIVISI ---
-@bot.tree.command(name="miei-conti-condivisi", description="Mostra i conti condivisi di cui fai parte")
+# --- 5️⃣ CONTI CONDIVISI ---
+@bot.tree.command(name="miei-conti-condivisi", description="Elenca i tuoi conti condivisi")
 async def miei_conti_condivisi(interaction: Interaction):
     conn = get_db()
     c = conn.cursor()
@@ -537,7 +543,7 @@ async def miei_conti_condivisi(interaction: Interaction):
     conn.close()
 
     if not rows:
-        return await interaction.response.send_message("❌ Non sei membro di alcun conto condiviso.", ephemeral=True)
+        return await interaction.response.send_message("❌ Non sei associato ad alcun conto condiviso.", ephemeral=True)
 
     embed = discord.Embed(title="👥 Conti Condivisi", color=discord.Color.blue())
     for nome, saldo, prop_id in rows:
@@ -546,5 +552,8 @@ async def miei_conti_condivisi(interaction: Interaction):
 
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
-# Run bot
-bot.run("TOKEN")
+# --- ESECUZIONE BOT ---
+if __name__ == "__main__":
+    if not TOKEN:
+        raise ValueError("❌ Token non trovato! Assicurati che il file .env contenga la voce DISCORD_TOKEN.")
+    bot.run(TOKEN)
